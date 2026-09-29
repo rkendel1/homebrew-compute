@@ -2,12 +2,11 @@ class Compute < Formula
   desc "Runtime-neutral workload execution"
   homepage "https://github.com/rkendel1/compute"
   url "https://github.com/rkendel1/compute/releases/download/v0.1.3/compute-0.1.3-linux-x86_64.tar.gz"
-  version "0.1.3"
   sha256 "d15d8bd9ee9c5cdbedcc021da5f58d3543ae797e4e7f61a48553471d043450ef"
   license "MIT"
 
-  depends_on :linux
   depends_on arch: :x86_64
+  depends_on :linux
 
   def install
     distribution = Pathname.pwd

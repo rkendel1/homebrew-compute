@@ -4,13 +4,12 @@ class ComputeConfigured < Formula
   desc "Compute with the certified configured ecosystem stack"
   homepage "https://github.com/rkendel1/compute"
   url "https://github.com/rkendel1/compute/releases/download/v0.1.3/compute-configured-0.1.3-linux-x86_64.tar.gz"
-  version "0.1.3"
   sha256 "79f374f6117c92448eed352db87cdfdb2ef159fecaeeec1a7bec3ef2a6a4b2b2"
   license "MIT"
 
   depends_on "rkendel1/compute/compute"
-  depends_on :linux
   depends_on arch: :x86_64
+  depends_on :linux
 
   def install
     configured = Pathname.pwd
