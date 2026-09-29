@@ -5,12 +5,12 @@ class Compute < Formula
   sha256 "d15d8bd9ee9c5cdbedcc021da5f58d3543ae797e4e7f61a48553471d043450ef"
   license "MIT"
 
+  depends_on arch: :x86_64
+  depends_on :linux
+
   # The release manifest certifies every byte under libexec, including Python
   # package metadata that Homebrew's generic cleaner would otherwise rewrite.
   skip_clean "libexec"
-
-  depends_on arch: :x86_64
-  depends_on :linux
 
   def install
     distribution = Pathname.pwd
