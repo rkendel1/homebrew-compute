@@ -1,14 +1,21 @@
 class Compute < Formula
   desc "Runtime-neutral workload execution"
   homepage "https://github.com/rkendel1/compute"
-  url "https://github.com/rkendel1/compute/releases/download/v0.1.3/compute-0.1.3-linux-x86_64.tar.gz"
-  sha256 "d15d8bd9ee9c5cdbedcc021da5f58d3543ae797e4e7f61a48553471d043450ef"
   license "MIT"
 
-  depends_on arch: :x86_64
-  depends_on :linux
+  on_linux do
+    url "https://github.com/rkendel1/compute/releases/download/v0.1.5/compute-0.1.5-linux-x86_64.tar.gz"
+    sha256 "2d4d37671ef6ba00dc0e01501117bf11774f4935cba6af75a6e8a1f404e459f1"
+    depends_on arch: :x86_64
+  end
 
-  # The release manifest certifies every byte under libexec, including Python
+  on_macos do
+    url "https://github.com/rkendel1/compute/releases/download/v0.1.5/compute-0.1.5-macos-aarch64.tar.gz"
+    sha256 "06f79d2659b9be1ebafd3a4281f6c7147216d25b50afccc8ecf5f64978c70134"
+    depends_on arch: :arm64
+  end
+
+  # The release manifest covers every byte under libexec, including Python
   # package metadata that Homebrew's generic cleaner would otherwise rewrite.
   skip_clean "libexec"
 
