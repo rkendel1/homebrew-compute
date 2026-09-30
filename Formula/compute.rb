@@ -1,19 +1,17 @@
 class Compute < Formula
   desc "Runtime-neutral workload execution"
   homepage "https://github.com/rkendel1/compute"
+  platform = OS.mac? ? "macos-aarch64" : "linux-x86_64"
+  checksum = if OS.mac?
+    "1508eb4103315609a8abc8cc847a0840ea075c618cebcad7fad9f482fd57f1d7"
+  else
+    "cd9701719c43b393a61958f0fde65cea85e98d23bac25c8b79b2c707b6e96220"
+  end
+  url "https://github.com/rkendel1/compute/releases/download/v0.1.6/compute-0.1.6-#{platform}.tar.gz"
+  sha256 checksum
   license "MIT"
 
-  on_linux do
-    url "https://github.com/rkendel1/compute/releases/download/v0.1.5/compute-0.1.5-linux-x86_64.tar.gz"
-    sha256 "2d4d37671ef6ba00dc0e01501117bf11774f4935cba6af75a6e8a1f404e459f1"
-    depends_on arch: :x86_64
-  end
-
-  on_macos do
-    url "https://github.com/rkendel1/compute/releases/download/v0.1.5/compute-0.1.5-macos-aarch64.tar.gz"
-    sha256 "06f79d2659b9be1ebafd3a4281f6c7147216d25b50afccc8ecf5f64978c70134"
-    depends_on arch: :arm64
-  end
+  depends_on arch: OS.mac? ? :arm64 : :x86_64
 
   # The release manifest covers every byte under libexec, including Python
   # package metadata that Homebrew's generic cleaner would otherwise rewrite.
@@ -22,8 +20,17 @@ class Compute < Formula
   def install
     distribution = Pathname.pwd
     distribution /= "compute-distribution" unless (distribution/"bin/compute").exist?
+    system "tar", "-cf", prefix/"runtime-payload.tar", "-C", distribution, "runtimes"
     libexec.install distribution.children
     bin.install_symlink libexec/"bin/compute"
+  end
+
+  post_install_steps do
+    # Homebrew's linkage pass rewrites Mach-O payloads after `install`. Restore
+    # the certified runtime tree afterwards so its manifest hashes stay exact.
+    remove "runtimes", base: :libexec, recursive: true
+    run "tar", args: ["-xf", "{{prefix}}/runtime-payload.tar", "-C", "{{libexec}}"]
+    remove "runtime-payload.tar", base: :prefix
   end
 
   test do

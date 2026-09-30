@@ -3,21 +3,18 @@ require "json"
 class ComputeConfigured < Formula
   desc "Compute with the version-pinned configured ecosystem stack"
   homepage "https://github.com/rkendel1/compute"
+  platform = OS.mac? ? "macos-aarch64" : "linux-x86_64"
+  checksum = if OS.mac?
+    "ab0d7e9f82366ad97a9f654d2d50c5d154b4f3f8593e437f4a7c343b7492a737"
+  else
+    "3c0cb8f043034b36ad7882d25d641df178636033ee07e7a679252f044d62e55d"
+  end
+  url "https://github.com/rkendel1/compute/releases/download/v0.1.6/compute-configured-0.1.6-#{platform}.tar.gz"
+  sha256 checksum
   license "MIT"
 
+  depends_on arch: OS.mac? ? :arm64 : :x86_64
   depends_on "rkendel1/compute/compute"
-
-  on_linux do
-    url "https://github.com/rkendel1/compute/releases/download/v0.1.5/compute-configured-0.1.5-linux-x86_64.tar.gz"
-    sha256 "e25ac7c663d32efd48f3ecab9b6261b571eb8435f2794623100e079cfbab3c6a"
-    depends_on arch: :x86_64
-  end
-
-  on_macos do
-    url "https://github.com/rkendel1/compute/releases/download/v0.1.5/compute-configured-0.1.5-macos-aarch64.tar.gz"
-    sha256 "f45c29909147afb3af29c51712f5d7ac3781ecbc4e8db90c70d6c9d2f7e5e67b"
-    depends_on arch: :arm64
-  end
 
   # The configured compatibility evidence covers the exact node_modules tree.
   skip_clean "libexec"
@@ -29,24 +26,24 @@ class ComputeConfigured < Formula
     (bin/"compute-configured").write <<~SH
       #!/bin/sh
       export COMPUTE_STACKS="#{libexec}/stacks${COMPUTE_STACKS:+:$COMPUTE_STACKS}"
-      exec "#{Formula["compute"].opt_bin}/compute" "$@"
+      exec "#{formula_opt_bin("compute")}/compute" "$@"
     SH
     (bin/"compute-configured-verify").write <<~SH
       #!/bin/sh
-      version=$("#{Formula["compute"].opt_bin}/compute" --version) || exit
+      version=$("#{formula_opt_bin("compute")}/compute" --version) || exit
       version=${version#compute }
-      COMPUTE_INSTALLED_VERSION="$version" exec "#{Formula["compute"].opt_libexec}/runtimes/node/bin/node" "#{libexec}/verify.mjs"
+      COMPUTE_INSTALLED_VERSION="$version" exec "#{formula_opt_libexec("compute")}/runtimes/node/bin/node" "#{libexec}/verify.mjs"
     SH
     (bin/"compute-configured-setup").write <<~SH
       #!/bin/sh
       "#{bin}/compute-configured-verify" >/dev/null || exit
-      status=$("#{Formula["compute"].opt_libexec}/runtimes/node/bin/node" -p "require('#{libexec}/stack.json').distribution.certification_status") || exit
+      status=$("#{formula_opt_libexec("compute")}/runtimes/node/bin/node" -p "require('#{libexec}/stack.json').distribution.certification_status") || exit
       printf '%s\n' "Configured Compute is $status and active through COMPUTE_STACKS."
     SH
   end
 
   test do
-    assert_equal "compute #{version}\n", shell_output("#{Formula["compute"].opt_bin}/compute --version")
+    assert_equal "compute #{version}\n", shell_output("#{formula_opt_bin("compute")}/compute --version")
     assert_equal version.to_s, JSON.parse((libexec/"stack.json").read).fetch("compute")
     assert_match '"result": "pass"', shell_output("#{bin}/compute-configured-verify")
     expected_status = OS.mac? ? "preview" : "certified"
