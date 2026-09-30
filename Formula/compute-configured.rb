@@ -5,11 +5,11 @@ class ComputeConfigured < Formula
   homepage "https://github.com/rkendel1/compute"
   platform = OS.mac? ? "macos-aarch64" : "linux-x86_64"
   checksum = if OS.mac?
-    "ab0d7e9f82366ad97a9f654d2d50c5d154b4f3f8593e437f4a7c343b7492a737"
+    "4d1d2d66c6bca0ac875fbf17bf70330bf790e92b40238c261ccf49a4402e08a0"
   else
-    "3c0cb8f043034b36ad7882d25d641df178636033ee07e7a679252f044d62e55d"
+    "26a4ce7f611cb8b60f7a96086b21c8084a13835d783281ab65eb9096ef6560f2"
   end
-  url "https://github.com/rkendel1/compute/releases/download/v0.1.6/compute-configured-0.1.6-#{platform}.tar.gz"
+  url "https://github.com/rkendel1/compute/releases/download/v0.1.9/compute-configured-0.1.9-#{platform}.tar.gz"
   sha256 checksum
   license "MIT"
 
