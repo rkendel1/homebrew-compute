@@ -5,11 +5,11 @@ class ComputeConfigured < Formula
   homepage "https://github.com/rkendel1/compute"
   platform = OS.mac? ? "macos-aarch64" : "linux-x86_64"
   checksum = if OS.mac?
-    "773a645da9b5860d691e325a9c0f43ca50581e0e2e2e270432ef0ced475679b3"
+    "5edce844340ebe3c52369f30380f19d1d8228c7b8b49ebd3822a83e982cfed6f"
   else
-    "5cbc9d540483c3583156fb9a395d64092f858942133c022e1812e29310424e34"
+    "28aae988352f590b77bff1d55fca2cbb521c446e39ad6c9f220052bf6f3f9262"
   end
-  url "https://github.com/rkendel1/compute/releases/download/v0.1.11/compute-configured-0.1.11-#{platform}.tar.gz"
+  url "https://github.com/rkendel1/compute/releases/download/v0.1.12/compute-configured-0.1.12-#{platform}.tar.gz"
   sha256 checksum
   license "MIT"
 
@@ -23,9 +23,13 @@ class ComputeConfigured < Formula
     configured = Pathname.pwd
     configured /= "compute-configured" unless (configured/"stack.json").exist?
     libexec.install configured.children
+    # COMPUTE_STACKS selects the configured stack; COMPUTE_CONFIGURED_HOME is the
+    # installed distribution root, where the profile and the pinned node_modules
+    # (and therefore the services this profile declares it manages) live.
     (bin/"compute-configured").write <<~SH
       #!/bin/sh
       export COMPUTE_STACKS="#{libexec}/stacks${COMPUTE_STACKS:+:$COMPUTE_STACKS}"
+      export COMPUTE_CONFIGURED_HOME="#{libexec}"
       exec "#{formula_opt_bin("compute")}/compute" "$@"
     SH
     (bin/"compute-configured-verify").write <<~SH
@@ -48,7 +52,9 @@ class ComputeConfigured < Formula
     assert_match '"result": "pass"', shell_output("#{bin}/compute-configured-verify")
     expected_status = OS.mac? ? "preview" : "certified"
     assert_match "#{expected_status} and active", shell_output("#{bin}/compute-configured-setup")
+    assert_equal 7, JSON.parse(shell_output("#{bin}/compute-configured recipe starters --json")).length
     assert_predicate libexec/"node_modules/@appport/github/package.json", :file?
+    assert_predicate libexec/"recipes/starters/dev.json", :file?
     assert_predicate libexec/"stacks/configured/stack.toml", :file?
   end
 end

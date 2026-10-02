@@ -1,13 +1,15 @@
+require "json"
+
 class Compute < Formula
   desc "Runtime-neutral workload execution"
   homepage "https://github.com/rkendel1/compute"
   platform = OS.mac? ? "macos-aarch64" : "linux-x86_64"
   checksum = if OS.mac?
-    "27c2a529df16bff2f4153d37a97ad40a7c124b33524e1f3060bb7312f662da9c"
+    "825033fa32a42e81f74a832a7abac14426d40a51452006a39d17d4a2d70aafc8"
   else
-    "54876ad46c32e7ca7f88948aec09a95c4e4390e070b6c1ca29a01b936dc44b3a"
+    "7e6255a40ef1cb7d80d62c2c8df1cbe7de458fd79ebaf78a93c63c0ae3fc5c33"
   end
-  url "https://github.com/rkendel1/compute/releases/download/v0.1.11/compute-0.1.11-#{platform}.tar.gz"
+  url "https://github.com/rkendel1/compute/releases/download/v0.1.12/compute-0.1.12-#{platform}.tar.gz"
   sha256 checksum
   license "MIT"
 
@@ -40,7 +42,9 @@ class Compute < Formula
 
     assert_equal "compute #{version}\n", shell_output("#{bin}/compute --version")
     system bin/"compute", "distribution", "verify", libexec
+    assert_equal 7, JSON.parse(shell_output("#{bin}/compute recipe starters --json")).length
     assert_predicate libexec/"runtimes", :directory?
+    assert_predicate libexec/"recipes/starters/dev.json", :file?
     assert_predicate libexec/"runtime-manifest.json", :file?
     assert_equal "preserve me\n", (testpath/"state"/"homebrew-state").read
   end
