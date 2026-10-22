@@ -36,7 +36,8 @@ class ComputeConfigured < Formula
       #!/bin/sh
       version=$("#{formula_opt_bin("compute")}/compute" --version) || exit
       version=${version#compute }
-      COMPUTE_INSTALLED_VERSION="$version" exec "#{formula_opt_libexec("compute")}/runtimes/node/bin/node" "#{libexec}/verify.mjs"
+      COMPUTE_INSTALLED_VERSION="$version" COMPUTE_BIN="#{formula_opt_bin("compute")}/compute" \\
+        exec "#{formula_opt_libexec("compute")}/runtimes/node/bin/node" "#{libexec}/verify.mjs"
     SH
     (bin/"compute-configured-setup").write <<~SH
       #!/bin/sh
@@ -44,12 +45,41 @@ class ComputeConfigured < Formula
       status=$("#{formula_opt_libexec("compute")}/runtimes/node/bin/node" -p "require('#{libexec}/stack.json').distribution.certification_status") || exit
       printf '%s\n' "Configured Compute is $status and active through COMPUTE_STACKS."
     SH
+    # The Cloudflare execution provider the profile declares as optional. Base
+    # Compute carries the provider; this only writes a credential-free pool file
+    # for it under COMPUTE_HOME, and never overwrites one that exists, so an
+    # upgrade or a second run leaves the user's configuration as it is. The API
+    # token is never an argument: the pool file names the variable that holds it.
+    (bin/"compute-configured-cloudflare-setup").write <<~SH
+      #!/bin/sh
+      if [ "$#" -ne 1 ]; then
+        echo "usage: compute-configured-cloudflare-setup ACCOUNT_ID" >&2
+        echo "  writes ${COMPUTE_HOME:-$HOME/.compute}/configured/cloudflare/compute-pool.toml (see docs/cloudflare.md)" >&2
+        exit 2
+      fi
+      pool="${COMPUTE_HOME:-$HOME/.compute}/configured/cloudflare/compute-pool.toml"
+      "#{formula_opt_bin("compute")}/compute" cloudflare init --account-id "$1" --output "$pool" || exit
+      "#{formula_opt_bin("compute")}/compute" cloudflare validate --provider cloudflare --offline --pool-config "$pool" || exit
+      printf '%s\n' "Use it with: export COMPUTE_POOL_CONFIG='$pool'" \\
+        "Then provide the token without writing it down: read -rs CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN" \\
+        "Check the account: compute cloudflare validate --provider cloudflare"
+    SH
     # The agent runtime the configured profile declares. Chip is a configured
     # component, so this wrapper lives here and nowhere else: base Compute has no
     # chip launcher and never grows one. Everything it needs -- the pinned
-    # node_modules, the bundled Node -- is inside the two formulas this one
-    # already depends on, so the launcher resolves them from the installed
-    # distribution rather than from a developer checkout or the host's PATH.
+    # node_modules (Chip and FX), the built configured agent, the bundled Node --
+    # is inside the two formulas this one already depends on, so the launcher
+    # resolves them from the installed distribution rather than from a developer
+    # checkout or the host's PATH.
+    #
+    # Chip treats its working directory as the agent application and keeps its
+    # durable sessions under it, so it never runs in the keg: it runs in a
+    # per-user directory under COMPUTE_HOME. node_modules and .output there are
+    # links into this immutable installation; agent/ and package.json are small
+    # copies, because Chip locates the application root through them and does
+    # not accept them as links. Both are rewritten only when they differ from
+    # the installed version, so sessions survive `brew upgrade` and concurrent
+    # launches do not race.
     (bin/"compute-configured-chip").write <<~SH
       #!/bin/sh
       root="#{libexec}"
@@ -63,9 +93,60 @@ class ComputeConfigured < Formula
         echo "compute-configured-chip: the Chip runtime is missing at $chip" >&2
         exit 1
       fi
+      if [ ! -f "$root/agent/agent.ts" ] || [ ! -f "$root/.output/server/index.mjs" ]; then
+        echo "compute-configured-chip: the configured agent is missing at $root/agent" >&2
+        exit 1
+      fi
+      work="${COMPUTE_HOME:-$HOME/.compute}/configured/chip"
+      mkdir -p "$work" || exit
+      for entry in node_modules .output; do
+        ln -sfn "$root/$entry" "$work/$entry" || exit
+      done
+      if ! diff -r "$root/agent" "$work/agent" >/dev/null 2>&1; then
+        rm -rf "$work/.agent.$$" && cp -RL "$root/agent" "$work/.agent.$$" &&
+          rm -rf "$work/agent" && mv "$work/.agent.$$" "$work/agent" || exit
+      fi
+      cmp -s "$root/package.json" "$work/package.json" || cp "$root/package.json" "$work/package.json" || exit
+      cd "$work" || exit
       export COMPUTE_STACKS="$root/stacks${COMPUTE_STACKS:+:$COMPUTE_STACKS}"
       export COMPUTE_CONFIGURED_HOME="$root"
       exec "$node" "$chip" "$@"
+    SH
+    # Rust Chip (chip-rs) is a different agent from the npm Chip above: its own executable
+    # (compute-rust-chip), its own launcher, and the Rust FX as its model provider. This
+    # launcher never starts the npm Chip or the npm FX, and the launcher above never starts this
+    # one. The executable is an optional part of the distribution (libexec/rust-chip); when a
+    # build does not include it the launcher says so and stops. It does not fall back to the npm
+    # agent. See docs/rust-chip.md.
+    (bin/"compute-configured-rust-chip").write <<~SH
+      #!/bin/sh
+      rust_chip="#{libexec}/rust-chip/bin/compute-rust-chip"
+      if [ ! -x "$rust_chip" ]; then
+        echo "compute-configured-rust-chip: Rust Chip is not part of this distribution build ($rust_chip is missing)" >&2
+        exit 1
+      fi
+      export COMPUTE_RUST_CHIP_WORKER="${COMPUTE_RUST_CHIP_WORKER:-$rust_chip}"
+      exec "$rust_chip" "$@"
+    SH
+    # The agent workload entry: `compute-configured-agent [--agent NAME] ARGS...` runs the named
+    # agent's launcher. Compute is agent-neutral; this only maps a name to an executable it
+    # launches. `chip` (the default) is Rust Chip. The npm Chip/Eve agent keeps its own launcher
+    # above and is not reachable from here, and there is no fallback between them: an unknown name
+    # is an error. A future agent is one more line in this `case`.
+    (bin/"compute-configured-agent").write <<~SH
+      #!/bin/sh
+      agent=chip
+      case "${1:-}" in
+        --agent) [ "$#" -ge 2 ] || { echo "compute-configured-agent: --agent needs a name" >&2; exit 2; }
+                 agent=$2; shift 2 ;;
+        --agent=*) agent=${1#--agent=}; shift ;;
+      esac
+      case "$agent" in
+        chip) exec "#{bin}/compute-configured-rust-chip" "$@" ;;
+        *)
+          echo "compute-configured-agent: unknown agent '$agent' (available: chip)" >&2
+          exit 2 ;;
+      esac
     SH
   end
 
@@ -88,7 +169,43 @@ class ComputeConfigured < Formula
     chip = JSON.parse((libexec/"stack.json").read)
                 .fetch("agent").fetch("runtimes").find { |runtime| runtime["name"] == "chip" }
     refute_nil chip, "the configured profile declares no chip runtime"
+    ENV["COMPUTE_HOME"] = testpath/"state"
     assert_equal chip.fetch("version"),
                  shell_output("#{bin}/compute-configured-chip --version").strip
+    # FX is Chip's model provider layer: the installed package must be the one
+    # the profile pins, and verify.mjs above has already sent a model request
+    # through Chip's fx() adapter and FX's native provider.
+    fx = chip.fetch("model_provider")
+    assert_equal fx.fetch("version"),
+                 JSON.parse((libexec/"node_modules/@appport/fx/package.json").read).fetch("version")
+    assert_predicate libexec/".output/server/index.mjs", :file?
+    # Rust Chip is a separate agent workload: its own executable, shipped beside (never inside)
+    # the npm agent. The release is not installable without it. Run it, do not just look for it:
+    # with no subcommand it prints its usage and exits 2.
+    assert_predicate libexec/"rust-chip/bin/compute-rust-chip", :executable?
+    assert_match "usage: compute-rust-chip",
+                 shell_output("#{bin}/compute-configured-rust-chip 2>&1", 2)
+    assert_match "unknown agent", shell_output("#{bin}/compute-configured-agent --agent nope 2>&1", 2)
+    # The optional Cloudflare provider: declared by the profile, reported by the
+    # installed Compute, set up without a credential, and set up only once.
+    cloudflare = JSON.parse((libexec/"stack.json").read)
+                     .fetch("execution_providers").find { |provider| provider["kind"] == "cloudflare" }
+    refute_nil cloudflare, "the configured profile declares no cloudflare provider"
+    assert_equal false, cloudflare.fetch("required")
+    profile = JSON.parse(shell_output("#{bin}/compute-configured cloudflare profile #{cloudflare.fetch("profile")} --json"))
+    assert_equal false, profile.fetch("capabilities").fetch("persistent_processes")
+    ENV.delete("CLOUDFLARE_API_TOKEN")
+    assert_match "Credential     missing",
+                 shell_output("#{bin}/compute-configured-cloudflare-setup 0123456789abcdef0123456789abcdef")
+    pool = testpath/"state/configured/cloudflare/compute-pool.toml"
+    assert_predicate pool, :file?
+    refute_match(/token\s*=/, pool.read.lines.reject { |line| line.start_with?("#") }.join)
+    before = pool.read
+    shell_output("#{bin}/compute-configured-cloudflare-setup fedcba9876543210fedcba9876543210")
+    assert_equal before, pool.read, "setup must not overwrite an existing pool file"
+    capabilities = JSON.parse(shell_output("#{formula_opt_bin("compute")}/compute provider capabilities cloudflare " \
+                                           "--json --pool-config #{pool} --capability-cache #{testpath}/cache.json"))
+    assert_equal "compute.cloudflare@1", capabilities.fetch("protocol")
+    assert_predicate libexec/"providers/cloudflare/hello.wasm", :file?
   end
 end
