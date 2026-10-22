@@ -5,11 +5,11 @@ class ComputeConfigured < Formula
   homepage "https://github.com/rkendel1/compute"
   platform = OS.mac? ? "macos-aarch64" : "linux-x86_64"
   checksum = if OS.mac?
-    "19afc74fe1fc3e06359cd441f5389fc73dde1d6cb787472913ac3e5a7f94b8ab"
+    "080c019f820fcf4e5399442d8be494de524904f3463ad13ca287b184ad61d73c"
   else
-    "c733dc2ec52dfbcb06ec916e334a1748a2e663dfb1f98d64cca2b716bac867d6"
+    "773b05c5caa93eb9694e0c9751f8367ddfc77e82d1288d6b9c9867e22efef7d6"
   end
-  url "https://github.com/rkendel1/compute/releases/download/v0.1.20/compute-configured-0.1.20-#{platform}.tar.gz"
+  url "https://github.com/rkendel1/compute/releases/download/v0.1.22/compute-configured-0.1.22-#{platform}.tar.gz"
   sha256 checksum
   license "MIT"
 
@@ -44,6 +44,15 @@ class ComputeConfigured < Formula
       "#{bin}/compute-configured-verify" >/dev/null || exit
       status=$("#{formula_opt_libexec("compute")}/runtimes/node/bin/node" -p "require('#{libexec}/stack.json').distribution.certification_status") || exit
       printf '%s\n' "Configured Compute is $status and active through COMPUTE_STACKS."
+      # AppPort Services needs an AuthBoundry authorizer module for management; Compute cannot
+      # supply one. Say where it goes, and what the service does until it is there.
+      authority="${APPPORT_AUTHORITY:-${COMPUTE_HOME:-$HOME/.compute}/configured/appport-authority.mjs}"
+      if [ -f "$authority" ]; then
+        printf '%s\n' "AppPort Services management uses the authority module at $authority."
+      else
+        printf '%s\n' "AppPort Services serves discovery only: management answers 503 until an AuthBoundry" \
+          "authorizer module ({ authorizer, identify, credentials }) is at $authority (or APPPORT_AUTHORITY names one)."
+      fi
     SH
     # The Cloudflare execution provider the profile declares as optional. Base
     # Compute carries the provider; this only writes a credential-free pool file
@@ -64,90 +73,65 @@ class ComputeConfigured < Formula
         "Then provide the token without writing it down: read -rs CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN" \\
         "Check the account: compute cloudflare validate --provider cloudflare"
     SH
-    # The agent runtime the configured profile declares. Chip is a configured
-    # component, so this wrapper lives here and nowhere else: base Compute has no
-    # chip launcher and never grows one. Everything it needs -- the pinned
-    # node_modules (Chip and FX), the built configured agent, the bundled Node --
-    # is inside the two formulas this one already depends on, so the launcher
-    # resolves them from the installed distribution rather than from a developer
-    # checkout or the host's PATH.
+    # The agent: stack-agent (Chip agent orchestration + FX inference, one Rust executable),
+    # hosted by Compute as `compute-stack-agent`. It is a configured component, so its launcher
+    # lives here and nowhere else: base Compute ships no agent. The agent loop and the model
+    # credential stay in this process; every capability it runs (project.read, project.write,
+    # pax.test, ...) runs in a Compute session of its own, through `capability-exec`, on the
+    # target the operator configures (docs/stack-agent.md).
     #
-    # Chip treats its working directory as the agent application and keeps its
-    # durable sessions under it, so it never runs in the keg: it runs in a
-    # per-user directory under COMPUTE_HOME. node_modules and .output there are
-    # links into this immutable installation; agent/ and package.json are small
-    # copies, because Chip locates the application root through them and does
-    # not accept them as links. Both are rewritten only when they differ from
-    # the installed version, so sessions survive `brew upgrade` and concurrent
-    # launches do not race.
-    (bin/"compute-configured-chip").write <<~SH
+    # The process starts from an empty environment: only what the agent and its Compute client
+    # need is passed through, by name. Nothing else the user's shell holds (cloud keys, tokens
+    # for other services) reaches it.
+    (bin/"compute-configured-stack-agent").write <<~SH
       #!/bin/sh
-      root="#{libexec}"
-      node="#{formula_opt_libexec("compute")}/runtimes/node/bin/node"
-      chip="$root/node_modules/.bin/chip"
-      if [ ! -x "$node" ]; then
-        echo "compute-configured-chip: the configured Node runtime is missing at $node" >&2
+      agent="#{libexec}/stack-agent/bin/compute-stack-agent"
+      if [ ! -x "$agent" ]; then
+        echo "compute-configured-stack-agent: stack-agent is not part of this distribution build ($agent is missing)" >&2
         exit 1
       fi
-      if [ ! -x "$chip" ]; then
-        echo "compute-configured-chip: the Chip runtime is missing at $chip" >&2
-        exit 1
-      fi
-      if [ ! -f "$root/agent/agent.ts" ] || [ ! -f "$root/.output/server/index.mjs" ]; then
-        echo "compute-configured-chip: the configured agent is missing at $root/agent" >&2
-        exit 1
-      fi
-      work="${COMPUTE_HOME:-$HOME/.compute}/configured/chip"
-      mkdir -p "$work" || exit
-      for entry in node_modules .output; do
-        ln -sfn "$root/$entry" "$work/$entry" || exit
+      # Unset every variable that is not on this list; values are never parsed or rewritten.
+      for name in $(env | sed -n 's/^\\([A-Za-z_][A-Za-z0-9_]*\\)=.*/\\1/p'); do
+        case "$name" in
+          PATH|HOME|TMPDIR|LANG|LC_*|COMPUTE_HOME|COMPUTE_DAEMON|COMPUTE_DAEMON_TOKEN) ;;
+          HTTPS_PROXY|HTTP_PROXY|NO_PROXY|https_proxy|http_proxy|no_proxy|SSL_CERT_FILE) ;;
+          CHIP_*|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPUTE_STACK_AGENT_*) ;;
+          *) unset "$name" 2>/dev/null ;;
+        esac
       done
-      if ! diff -r "$root/agent" "$work/agent" >/dev/null 2>&1; then
-        rm -rf "$work/.agent.$$" && cp -RL "$root/agent" "$work/.agent.$$" &&
-          rm -rf "$work/agent" && mv "$work/.agent.$$" "$work/agent" || exit
-      fi
-      cmp -s "$root/package.json" "$work/package.json" || cp "$root/package.json" "$work/package.json" || exit
-      cd "$work" || exit
-      export COMPUTE_STACKS="$root/stacks${COMPUTE_STACKS:+:$COMPUTE_STACKS}"
-      export COMPUTE_CONFIGURED_HOME="$root"
-      exec "$node" "$chip" "$@"
-    SH
-    # Rust Chip (chip-rs) is a different agent from the npm Chip above: its own executable
-    # (compute-rust-chip), its own launcher, and the Rust FX as its model provider. This
-    # launcher never starts the npm Chip or the npm FX, and the launcher above never starts this
-    # one. The executable is an optional part of the distribution (libexec/rust-chip); when a
-    # build does not include it the launcher says so and stops. It does not fall back to the npm
-    # agent. See docs/rust-chip.md.
-    (bin/"compute-configured-rust-chip").write <<~SH
-      #!/bin/sh
-      rust_chip="#{libexec}/rust-chip/bin/compute-rust-chip"
-      if [ ! -x "$rust_chip" ]; then
-        echo "compute-configured-rust-chip: Rust Chip is not part of this distribution build ($rust_chip is missing)" >&2
-        exit 1
-      fi
-      export COMPUTE_RUST_CHIP_WORKER="${COMPUTE_RUST_CHIP_WORKER:-$rust_chip}"
-      exec "$rust_chip" "$@"
+      export COMPUTE_STACK_AGENT_WORKER="${COMPUTE_STACK_AGENT_WORKER:-$agent}"
+      exec "$agent" "$@"
     SH
     # The agent workload entry: `compute-configured-agent [--agent NAME] ARGS...` runs the named
     # agent's launcher. Compute is agent-neutral; this only maps a name to an executable it
-    # launches. `chip` (the default) is Rust Chip. The npm Chip/Eve agent keeps its own launcher
-    # above and is not reachable from here, and there is no fallback between them: an unknown name
-    # is an error. A future agent is one more line in this `case`.
+    # launches. `stack-agent` is the default and the only agent. An unknown name is an error.
     (bin/"compute-configured-agent").write <<~SH
       #!/bin/sh
-      agent=chip
+      agent=stack-agent
       case "${1:-}" in
         --agent) [ "$#" -ge 2 ] || { echo "compute-configured-agent: --agent needs a name" >&2; exit 2; }
                  agent=$2; shift 2 ;;
         --agent=*) agent=${1#--agent=}; shift ;;
       esac
       case "$agent" in
-        chip) exec "#{bin}/compute-configured-rust-chip" "$@" ;;
+        stack-agent) exec "#{bin}/compute-configured-stack-agent" "$@" ;;
         *)
-          echo "compute-configured-agent: unknown agent '$agent' (available: chip)" >&2
+          echo "compute-configured-agent: unknown agent '$agent' (available: stack-agent)" >&2
           exit 2 ;;
       esac
     SH
+  end
+
+  def caveats
+    <<~EOS
+      compute-configured installs third-party packages under their own licenses
+      (THIRD_PARTY.md in the Compute repository). @authboundry/core and its platform
+      packages are proprietary (UNLICENSED) and run a closed native binary; they are
+      installed because @appport/services depends on them.
+
+      AppPort Services serves discovery only until an AuthBoundry authorizer module is at
+      ${COMPUTE_HOME:-~/.compute}/configured/appport-authority.mjs (or APPPORT_AUTHORITY names one).
+    EOS
   end
 
   test do
@@ -160,31 +144,16 @@ class ComputeConfigured < Formula
     assert_predicate libexec/"node_modules/@appport/github/package.json", :file?
     assert_predicate libexec/"recipes/starters/dev.json", :file?
     assert_predicate libexec/"stacks/configured/stack.toml", :file?
-    # Chip is a configured component. It is proved here by running it, not by
-    # asserting that a file exists, and the proof lives only in this formula:
-    # base Compute ships no Chip launcher. The expected version is read from the
-    # installed profile rather than repeated here, so the profile stays the only
-    # place that pins it.
-    assert_predicate libexec/"node_modules/@appport/chip/package.json", :file?
-    chip = JSON.parse((libexec/"stack.json").read)
-                .fetch("agent").fetch("runtimes").find { |runtime| runtime["name"] == "chip" }
-    refute_nil chip, "the configured profile declares no chip runtime"
-    ENV["COMPUTE_HOME"] = testpath/"state"
-    assert_equal chip.fetch("version"),
-                 shell_output("#{bin}/compute-configured-chip --version").strip
-    # FX is Chip's model provider layer: the installed package must be the one
-    # the profile pins, and verify.mjs above has already sent a model request
-    # through Chip's fx() adapter and FX's native provider.
-    fx = chip.fetch("model_provider")
-    assert_equal fx.fetch("version"),
-                 JSON.parse((libexec/"node_modules/@appport/fx/package.json").read).fetch("version")
-    assert_predicate libexec/".output/server/index.mjs", :file?
-    # Rust Chip is a separate agent workload: its own executable, shipped beside (never inside)
-    # the npm agent. The release is not installable without it. Run it, do not just look for it:
-    # with no subcommand it prints its usage and exits 2.
-    assert_predicate libexec/"rust-chip/bin/compute-rust-chip", :executable?
-    assert_match "usage: compute-rust-chip",
-                 shell_output("#{bin}/compute-configured-rust-chip 2>&1", 2)
+    # stack-agent is the configured agent. Run it, do not just look for it: with no subcommand it
+    # prints its usage and exits 2. The profile names it, and nothing else, as the agent.
+    agents = JSON.parse((libexec/"stack.json").read).fetch("agent").fetch("runtimes")
+    assert_equal ["stack-agent"], agents.map { |runtime| runtime.fetch("name") }
+    assert_predicate libexec/"stack-agent/bin/compute-stack-agent", :executable?
+    assert_match "usage: compute-stack-agent",
+                 shell_output("#{bin}/compute-configured-stack-agent 2>&1", 2)
+    assert_match "usage: compute-stack-agent",
+                 shell_output("#{bin}/compute-configured-agent 2>&1", 2)
+    refute_predicate libexec/"node_modules/@appport/chip", :exist?
     assert_match "unknown agent", shell_output("#{bin}/compute-configured-agent --agent nope 2>&1", 2)
     # The optional Cloudflare provider: declared by the profile, reported by the
     # installed Compute, set up without a credential, and set up only once.
